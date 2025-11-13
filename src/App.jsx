@@ -178,6 +178,45 @@ function getLocationName(lat, lng) {
   return `${lat.toFixed(4)}°N, ${Math.abs(lng).toFixed(4)}°W`;
 }
 
+// Get event display information
+function getEventInfo(eventType) {
+  const eventMap = {
+    // Trip Lifecycle
+    'trip_started': { label: 'Trip Started', color: 'text-blue-400', icon: 'start', severity: 'info' },
+    'trip_completed': { label: 'Trip Completed', color: 'text-green-400', icon: 'check', severity: 'success' },
+    'trip_cancelled': { label: 'Trip Cancelled', color: 'text-red-400', icon: 'cancel', severity: 'error' },
+    
+    // Location & Movement
+    'location_ping': { label: 'Location Update', color: 'text-blue-300', icon: 'location', severity: 'info' },
+    'signal_lost': { label: 'Signal Lost', color: 'text-orange-400', icon: 'alert', severity: 'warning' },
+    'signal_recovered': { label: 'Signal Recovered', color: 'text-green-400', icon: 'check', severity: 'success' },
+    
+    // Vehicle State
+    'vehicle_stopped': { label: 'Vehicle Stopped', color: 'text-yellow-400', icon: 'stop', severity: 'warning' },
+    'vehicle_moving': { label: 'Vehicle Moving', color: 'text-green-400', icon: 'moving', severity: 'info' },
+    'speed_violation': { label: 'Speed Violation', color: 'text-red-400', icon: 'alert', severity: 'critical' },
+    
+    // Telemetry
+    'vehicle_telemetry': { label: 'Vehicle Telemetry', color: 'text-purple-400', icon: 'data', severity: 'info' },
+    'device_error': { label: 'Device Error', color: 'text-red-400', icon: 'alert', severity: 'error' },
+    
+    // System Warnings
+    'battery_low': { label: 'Battery Low', color: 'text-orange-400', icon: 'battery', severity: 'warning' },
+    
+    // Fuel Events
+    'fuel_level_low': { label: 'Fuel Level Low', color: 'text-yellow-400', icon: 'fuel', severity: 'warning' },
+    'refueling_started': { label: 'Refueling Started', color: 'text-blue-400', icon: 'fuel', severity: 'info' },
+    'refueling_completed': { label: 'Refueling Completed', color: 'text-green-400', icon: 'fuel', severity: 'success' }
+  };
+  
+  return eventMap[eventType] || { 
+    label: eventType.replace(/_/g, ' ').toUpperCase(), 
+    color: 'text-slate-300', 
+    icon: 'activity', 
+    severity: 'info' 
+  };
+}
+
 // Calculate trip metrics from new data format
 function calculateTripMetrics(trip, processedEvents) {
   if (!processedEvents || processedEvents.length === 0) {
@@ -186,13 +225,19 @@ function calculateTripMetrics(trip, processedEvents) {
       avgSpeed: 0,
       currentSpeed: 0,
       batteryLevel: 100,
+      fuelLevel: 100,
       progress: 0,
       alerts: [],
+      warnings: [],
       duration: 0,
       status: trip.status,
       signalQuality: 'unknown',
       heading: 0,
-      altitude: 0
+      altitude: 0,
+      stopCount: 0,
+      speedViolations: 0,
+      fuelConsumed: 0,
+      telemetryData: null
     };
   }
 
@@ -205,13 +250,29 @@ function calculateTripMetrics(trip, processedEvents) {
     ? speedEvents.reduce((sum, e) => sum + e.movement.speed_kmh, 0) / speedEvents.length 
     : 0;
 
-  // Get alerts and violations
-  const alerts = processedEvents.filter(e => 
-    e.event_type.includes('alert') || 
-    e.event_type.includes('violation') ||
-    e.event_type.includes('warning') ||
-    e.overspeed === true
-  );
+  // Get alerts (critical issues)
+  const alerts = processedEvents.filter(e => {
+    const info = getEventInfo(e.event_type);
+    return info.severity === 'critical' || info.severity === 'error' || e.overspeed === true;
+  });
+
+  // Get warnings (non-critical issues)
+  const warnings = processedEvents.filter(e => {
+    const info = getEventInfo(e.event_type);
+    return info.severity === 'warning';
+  });
+
+  // Count specific events
+  const stopCount = processedEvents.filter(e => e.event_type === 'vehicle_stopped').length;
+  const speedViolations = processedEvents.filter(e => 
+    e.event_type === 'speed_violation' || e.overspeed === true
+  ).length;
+
+  // Get latest telemetry if available
+  const telemetryEvents = processedEvents.filter(e => e.event_type === 'vehicle_telemetry');
+  const latestTelemetry = telemetryEvents.length > 0 
+    ? telemetryEvents[telemetryEvents.length - 1].telemetry 
+    : null;
 
   // Calculate duration in hours
   const duration = (latest.timestamp - first.timestamp) / (1000 * 60 * 60);
@@ -221,14 +282,39 @@ function calculateTripMetrics(trip, processedEvents) {
     ? (latest.distance_travelled_km / trip.totalDistance) * 100 
     : (processedEvents.length / trip.events.length) * 100;
 
+  // Get fuel level (from telemetry or completion event)
+  let fuelLevel = 100;
+  let fuelConsumed = 0;
+  if (latestTelemetry?.fuel_level_percent !== undefined) {
+    fuelLevel = latestTelemetry.fuel_level_percent;
+  } else if (latest.event_type === 'trip_completed' && latest.fuel_consumed_percent) {
+    fuelConsumed = latest.fuel_consumed_percent;
+    fuelLevel = 100 - fuelConsumed;
+  }
+
+  // Check for fuel/refueling events
+  const fuelEvents = processedEvents.filter(e => 
+    e.event_type.includes('fuel') || e.event_type.includes('refuel')
+  );
+  if (fuelEvents.length > 0) {
+    const lastFuelEvent = fuelEvents[fuelEvents.length - 1];
+    if (lastFuelEvent.fuel_level_percent !== undefined) {
+      fuelLevel = lastFuelEvent.fuel_level_percent;
+    } else if (lastFuelEvent.fuel_level_after_refuel !== undefined) {
+      fuelLevel = lastFuelEvent.fuel_level_after_refuel;
+    }
+  }
+
   return {
     distance: latest.distance_travelled_km || 0,
     avgSpeed: Math.round(avgSpeed),
     currentSpeed: latest.movement?.speed_kmh || 0,
     batteryLevel: latest.device?.battery_level || 0,
+    fuelLevel: fuelLevel,
     charging: latest.device?.charging || false,
     progress: Math.min(progress, 100),
     alerts,
+    warnings,
     duration: duration.toFixed(1),
     status: latest.event_type === 'trip_completed' ? 'completed' : 
             latest.event_type === 'trip_cancelled' ? 'cancelled' : 'in_progress',
@@ -237,7 +323,11 @@ function calculateTripMetrics(trip, processedEvents) {
     heading: latest.movement?.heading_degrees || 0,
     altitude: latest.location?.altitude_meters || 0,
     accuracy: latest.location?.accuracy_meters || 0,
-    moving: latest.movement?.moving || false
+    moving: latest.movement?.moving || false,
+    stopCount,
+    speedViolations,
+    fuelConsumed,
+    telemetryData: latestTelemetry
   };
 }
 
@@ -569,6 +659,19 @@ function TripCard({ trip, processedEvents = [] }) {
           </div>
         </div>
         <div className="flex items-start space-x-2">
+          <Fuel className={`h-4 w-4 mt-0.5 ${
+            metrics.fuelLevel < 20 ? 'text-red-400' :
+            metrics.fuelLevel < 40 ? 'text-yellow-400' : 'text-green-400'
+          }`} />
+          <div>
+            <p className="text-slate-500 text-xs">Fuel Level</p>
+            <p className={`text-sm font-semibold ${
+              metrics.fuelLevel < 20 ? 'text-red-400' :
+              metrics.fuelLevel < 40 ? 'text-yellow-400' : 'text-green-400'
+            }`}>{metrics.fuelLevel.toFixed(1)}%</p>
+          </div>
+        </div>
+        <div className="flex items-start space-x-2">
           <Battery className={`h-4 w-4 mt-0.5 ${
             metrics.batteryLevel < 20 ? 'text-red-400' :
             metrics.batteryLevel < 40 ? 'text-yellow-400' : 'text-green-400'
@@ -584,12 +687,23 @@ function TripCard({ trip, processedEvents = [] }) {
             </p>
           </div>
         </div>
-        <div className="flex items-start space-x-2">
-          <Timer className="h-4 w-4 text-purple-400 mt-0.5" />
-          <div>
-            <p className="text-slate-500 text-xs">Duration</p>
-            <p className="text-white text-sm font-semibold">{metrics.duration}h</p>
-          </div>
+      </div>
+
+      {/* Additional Metrics Row */}
+      <div className="grid grid-cols-3 gap-2 mb-4 text-xs">
+        <div className="bg-slate-900 rounded p-2">
+          <p className="text-slate-500 mb-1">Stops</p>
+          <p className="text-white font-semibold">{metrics.stopCount}</p>
+        </div>
+        <div className="bg-slate-900 rounded p-2">
+          <p className="text-slate-500 mb-1">Duration</p>
+          <p className="text-white font-semibold">{metrics.duration}h</p>
+        </div>
+        <div className="bg-slate-900 rounded p-2">
+          <p className="text-slate-500 mb-1">Violations</p>
+          <p className={`font-semibold ${metrics.speedViolations > 0 ? 'text-red-400' : 'text-green-400'}`}>
+            {metrics.speedViolations}
+          </p>
         </div>
       </div>
 
@@ -623,15 +737,29 @@ function TripCard({ trip, processedEvents = [] }) {
         </div>
       )}
 
-      {/* Alerts Badge */}
-      {metrics.alerts.length > 0 && (
-        <div className="flex items-center justify-between bg-red-900/20 border border-red-800 rounded p-2 mb-3">
-          <div className="flex items-center space-x-2">
-            <AlertTriangle className="h-4 w-4 text-red-400" />
-            <span className="text-red-400 text-sm font-medium">
-              {metrics.alerts.length} Active Alert{metrics.alerts.length > 1 ? 's' : ''}
-            </span>
-          </div>
+      {/* Alerts & Warnings Badge */}
+      {(metrics.alerts.length > 0 || metrics.warnings.length > 0) && (
+        <div className="space-y-2 mb-3">
+          {metrics.alerts.length > 0 && (
+            <div className="flex items-center justify-between bg-red-900/20 border border-red-800 rounded p-2">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-4 w-4 text-red-400" />
+                <span className="text-red-400 text-sm font-medium">
+                  {metrics.alerts.length} Critical Alert{metrics.alerts.length > 1 ? 's' : ''}
+                </span>
+              </div>
+            </div>
+          )}
+          {metrics.warnings.length > 0 && (
+            <div className="flex items-center justify-between bg-yellow-900/20 border border-yellow-800 rounded p-2">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-4 w-4 text-yellow-400" />
+                <span className="text-yellow-400 text-sm font-medium">
+                  {metrics.warnings.length} Warning{metrics.warnings.length > 1 ? 's' : ''}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -779,14 +907,16 @@ function AlertSummary({ trips, processedEvents }) {
     Object.entries(processedEvents).forEach(([tripId, events]) => {
       const trip = trips.find(t => t.trip_id === tripId);
       events.forEach(event => {
-        if (event.event_type.includes('alert') || 
-            event.event_type.includes('violation') || 
-            event.event_type.includes('warning') ||
+        const eventInfo = getEventInfo(event.event_type);
+        if (eventInfo.severity === 'critical' || 
+            eventInfo.severity === 'error' ||
+            eventInfo.severity === 'warning' ||
             event.overspeed === true) {
           allAlerts.push({
             ...event,
             tripName: trip?.name,
-            tripId
+            tripId,
+            eventInfo
           });
         }
       });
@@ -795,37 +925,78 @@ function AlertSummary({ trips, processedEvents }) {
   }, [trips, processedEvents]);
 
   const criticalCount = alerts.filter(a => 
-    a.severity === 'high' || a.severity === 'critical'
+    a.eventInfo.severity === 'critical' || a.eventInfo.severity === 'error'
+  ).length;
+
+  const warningCount = alerts.filter(a => 
+    a.eventInfo.severity === 'warning'
   ).length;
 
   const getSeverityColor = (severity) => {
     switch(severity) {
       case 'critical': return 'bg-red-600 text-white';
-      case 'high': return 'bg-orange-600 text-white';
-      case 'medium': return 'bg-yellow-600 text-white';
+      case 'error': return 'bg-red-500 text-white';
+      case 'warning': return 'bg-yellow-600 text-white';
+      case 'success': return 'bg-green-600 text-white';
       default: return 'bg-blue-600 text-white';
     }
   };
+
+  // Group alerts by type
+  const alertsByType = useMemo(() => {
+    const grouped = {};
+    alerts.forEach(alert => {
+      const type = alert.event_type;
+      if (!grouped[type]) {
+        grouped[type] = [];
+      }
+      grouped[type].push(alert);
+    });
+    return grouped;
+  }, [alerts]);
 
   return (
     <div className="bg-slate-800 rounded-lg p-5 border border-slate-700">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-white font-semibold flex items-center">
           <AlertTriangle className="h-5 w-5 mr-2 text-yellow-400" />
-          Active Alerts
+          Active Alerts & Warnings
         </h3>
-        <div className="flex items-center space-x-2">
-          <span className="text-slate-400 text-sm">Total:</span>
-          <span className="text-white font-semibold">{alerts.length}</span>
+        <div className="flex items-center space-x-3 text-sm">
           {criticalCount > 0 && (
-            <>
-              <span className="text-red-400 text-sm ml-2">Critical:</span>
+            <div className="flex items-center space-x-1">
+              <span className="text-red-400 font-medium">Critical:</span>
               <span className="text-red-400 font-semibold">{criticalCount}</span>
-            </>
+            </div>
           )}
+          {warningCount > 0 && (
+            <div className="flex items-center space-x-1">
+              <span className="text-yellow-400 font-medium">Warnings:</span>
+              <span className="text-yellow-400 font-semibold">{warningCount}</span>
+            </div>
+          )}
+          <div className="flex items-center space-x-1">
+            <span className="text-slate-400">Total:</span>
+            <span className="text-white font-semibold">{alerts.length}</span>
+          </div>
         </div>
       </div>
       
+      {/* Alert Type Summary */}
+      {Object.keys(alertsByType).length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {Object.entries(alertsByType).slice(0, 4).map(([type, typeAlerts]) => {
+            const info = getEventInfo(type);
+            return (
+              <div key={type} className="bg-slate-900 rounded p-2">
+                <p className="text-slate-400 text-xs mb-1">{info.label}</p>
+                <p className={`font-semibold ${info.color}`}>{typeAlerts.length}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="space-y-2 max-h-80 overflow-y-auto">
         {alerts.length === 0 ? (
           <div className="text-center py-4 text-slate-500">
@@ -833,31 +1004,65 @@ function AlertSummary({ trips, processedEvents }) {
             <p>No alerts - All systems normal</p>
           </div>
         ) : (
-          alerts.slice(0, 10).map((alert, idx) => (
+          alerts.slice(0, 15).map((alert, idx) => (
             <div key={idx} className="bg-slate-900 rounded p-3">
               <div className="flex items-start justify-between mb-2">
                 <div className="flex-1">
                   <div className="flex items-center space-x-2 mb-1">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSeverityColor(alert.severity)}`}>
-                      {alert.severity?.toUpperCase() || 'INFO'}
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSeverityColor(alert.eventInfo.severity)}`}>
+                      {alert.eventInfo.severity.toUpperCase()}
                     </span>
-                    <span className="text-white text-sm font-medium">
-                      {alert.event_type.replace(/_/g, ' ').toUpperCase()}
+                    <span className={`text-sm font-medium ${alert.eventInfo.color}`}>
+                      {alert.eventInfo.label}
                     </span>
                   </div>
                   <p className="text-slate-400 text-xs">{alert.tripName}</p>
                 </div>
-                <span className="text-slate-500 text-xs">
+                <span className="text-slate-500 text-xs whitespace-nowrap">
                   {alert.timestamp.toLocaleTimeString()}
                 </span>
               </div>
-              <p className="text-slate-300 text-sm">{getLocationName(alert.location?.lat, alert.location?.lng)}</p>
-              {alert.overspeed && (
-                <p className="text-red-400 text-xs mt-1">⚠️ Vehicle exceeding speed limit</p>
-              )}
-              {alert.movement?.speed_kmh && (
-                <p className="text-slate-400 text-xs mt-1">Speed: {alert.movement.speed_kmh.toFixed(1)} km/h</p>
-              )}
+              <p className="text-slate-300 text-sm mb-1">
+                {getLocationName(alert.location?.lat, alert.location?.lng)}
+              </p>
+              
+              {/* Event-specific details */}
+              <div className="text-xs text-slate-400 space-y-1">
+                {alert.event_type === 'speed_violation' && (
+                  <p className="text-red-400">
+                    ⚠️ Speed: {alert.movement?.speed_kmh?.toFixed(1)} km/h 
+                    {alert.speed_limit_kmh && ` (Limit: ${alert.speed_limit_kmh} km/h)`}
+                    {alert.violation_amount_kmh && ` | Over by: ${alert.violation_amount_kmh} km/h`}
+                  </p>
+                )}
+                {alert.event_type === 'signal_lost' && alert.signal_quality && (
+                  <p>Signal Quality: {alert.signal_quality}</p>
+                )}
+                {alert.event_type === 'battery_low' && (
+                  <p className="text-orange-400">
+                    Battery: {alert.battery_level_percent?.toFixed(1)}%
+                    {alert.estimated_remaining_hours && ` | Est. remaining: ${alert.estimated_remaining_hours}h`}
+                  </p>
+                )}
+                {alert.event_type === 'fuel_level_low' && (
+                  <p className="text-yellow-400">
+                    Fuel: {alert.fuel_level_percent?.toFixed(1)}%
+                    {alert.estimated_range_km && ` | Est. range: ${alert.estimated_range_km} km`}
+                  </p>
+                )}
+                {alert.event_type === 'device_error' && (
+                  <p className="text-red-400">
+                    {alert.error_message || alert.error_type}
+                    {alert.error_code && ` (${alert.error_code})`}
+                  </p>
+                )}
+                {alert.event_type === 'trip_cancelled' && alert.cancellation_reason && (
+                  <p className="text-red-400">Reason: {alert.cancellation_reason.replace(/_/g, ' ')}</p>
+                )}
+                {alert.overspeed && alert.event_type !== 'speed_violation' && (
+                  <p className="text-red-400">⚠️ Overspeed detected</p>
+                )}
+              </div>
             </div>
           ))
         )}
@@ -872,24 +1077,21 @@ function EventFeed({ allEvents, currentTime }) {
     if (!currentTime) return [];
     return allEvents
       .filter(e => e.timestamp <= currentTime)
-      .slice(-15)
+      .slice(-20)
       .reverse();
   }, [allEvents, currentTime]);
 
-  const getEventColor = (type) => {
-    if (type.includes('alert') || type.includes('violation') || type.includes('warning')) return 'text-red-400';
-    if (type.includes('completed')) return 'text-green-400';
-    if (type.includes('cancelled')) return 'text-red-400';
-    if (type.includes('started')) return 'text-blue-400';
-    return 'text-slate-300';
-  };
-
   const getEventIcon = (type) => {
-    if (type.includes('alert') || type.includes('violation')) return AlertTriangle;
+    if (type.includes('alert') || type.includes('violation') || type.includes('error')) return AlertTriangle;
     if (type.includes('completed')) return CheckCircle;
     if (type.includes('cancelled')) return XCircle;
     if (type.includes('location') || type.includes('ping')) return MapPin;
     if (type.includes('speed')) return Gauge;
+    if (type.includes('fuel') || type.includes('refuel')) return Fuel;
+    if (type.includes('battery')) return Battery;
+    if (type.includes('signal')) return Signal;
+    if (type.includes('stopped')) return Timer;
+    if (type.includes('moving')) return Activity;
     return Activity;
   };
 
@@ -914,14 +1116,15 @@ function EventFeed({ allEvents, currentTime }) {
         ) : (
           recentEvents.map((event, idx) => {
             const EventIcon = getEventIcon(event.event_type);
+            const eventInfo = getEventInfo(event.event_type);
             return (
-              <div key={idx} className="bg-slate-900 rounded p-3 hover:bg-slate-850 transition-colors">
+              <div key={idx} className="bg-slate-900 rounded p-3 hover:bg-slate-850 transition-colors border-l-2" style={{borderLeftColor: eventInfo.color.replace('text-', '')}}>
                 <div className="flex items-start space-x-3">
-                  <EventIcon className={`h-4 w-4 mt-0.5 ${getEventColor(event.event_type)}`} />
+                  <EventIcon className={`h-4 w-4 mt-0.5 ${eventInfo.color}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
-                      <span className={`font-medium text-sm ${getEventColor(event.event_type)}`}>
-                        {event.event_type.replace(/_/g, ' ').toUpperCase()}
+                      <span className={`font-medium text-sm ${eventInfo.color}`}>
+                        {eventInfo.label}
                       </span>
                       <span className="text-slate-500 text-xs whitespace-nowrap ml-2">
                         {event.timestamp.toLocaleTimeString()}
@@ -930,17 +1133,80 @@ function EventFeed({ allEvents, currentTime }) {
                     <div className="text-slate-400 text-xs mb-1">
                       {getLocationName(event.location?.lat, event.location?.lng)}
                     </div>
-                    <div className="flex items-center space-x-3 text-xs text-slate-500">
+                    <div className="flex items-center flex-wrap gap-2 text-xs text-slate-500">
                       <span>Vehicle: {event.vehicle_id}</span>
-                      {event.movement?.speed_kmh !== undefined && (
+                      {event.movement?.speed_kmh !== undefined && event.movement.speed_kmh > 0 && (
                         <span>Speed: {event.movement.speed_kmh.toFixed(1)} km/h</span>
                       )}
                       {event.device?.battery_level !== undefined && (
                         <span>Battery: {event.device.battery_level.toFixed(0)}%</span>
                       )}
+                      {event.signal_quality && (
+                        <span className="capitalize">Signal: {event.signal_quality}</span>
+                      )}
                     </div>
-                    {event.overspeed && (
-                      <div className="mt-1 text-xs text-red-400 font-medium">⚠️ Overspeed detected</div>
+                    
+                    {/* Event-specific details */}
+                    {event.event_type === 'speed_violation' && (
+                      <div className="mt-1 text-xs text-red-400">
+                        ⚠️ Speed: {event.movement?.speed_kmh?.toFixed(1)} km/h 
+                        {event.speed_limit_kmh && ` (Limit: ${event.speed_limit_kmh})`}
+                      </div>
+                    )}
+                    {event.event_type === 'signal_lost' && (
+                      <div className="mt-1 text-xs text-orange-400">
+                        ⚠️ GPS signal lost
+                      </div>
+                    )}
+                    {event.event_type === 'signal_recovered' && event.signal_lost_duration_seconds && (
+                      <div className="mt-1 text-xs text-green-400">
+                        ✓ Signal recovered after {event.signal_lost_duration_seconds}s
+                      </div>
+                    )}
+                    {event.event_type === 'battery_low' && event.battery_level_percent && (
+                      <div className="mt-1 text-xs text-orange-400">
+                        ⚠️ Battery at {event.battery_level_percent.toFixed(1)}%
+                      </div>
+                    )}
+                    {event.event_type === 'fuel_level_low' && event.fuel_level_percent && (
+                      <div className="mt-1 text-xs text-yellow-400">
+                        ⚠️ Fuel at {event.fuel_level_percent.toFixed(1)}% ({event.estimated_range_km} km remaining)
+                      </div>
+                    )}
+                    {event.event_type === 'refueling_completed' && (
+                      <div className="mt-1 text-xs text-green-400">
+                        ✓ Refueled: +{event.fuel_added_percent?.toFixed(1)}% ({event.refuel_duration_minutes}min)
+                      </div>
+                    )}
+                    {event.event_type === 'vehicle_stopped' && (
+                      <div className="mt-1 text-xs text-yellow-400">
+                        ⏸ Vehicle stopped
+                      </div>
+                    )}
+                    {event.event_type === 'vehicle_moving' && event.stop_duration_minutes && (
+                      <div className="mt-1 text-xs text-green-400">
+                        ▶ Resumed after {event.stop_duration_minutes}min stop
+                      </div>
+                    )}
+                    {event.event_type === 'device_error' && (
+                      <div className="mt-1 text-xs text-red-400">
+                        ⚠️ {event.error_message || event.error_type}
+                      </div>
+                    )}
+                    {event.event_type === 'trip_cancelled' && (
+                      <div className="mt-1 text-xs text-red-400">
+                        ✕ Cancelled: {event.cancellation_reason?.replace(/_/g, ' ')}
+                      </div>
+                    )}
+                    {event.event_type === 'trip_completed' && (
+                      <div className="mt-1 text-xs text-green-400">
+                        ✓ Completed: {event.total_distance_km?.toFixed(1)} km in {event.duration_minutes}min
+                      </div>
+                    )}
+                    {event.overspeed && !event.event_type.includes('violation') && (
+                      <div className="mt-1 text-xs text-red-400">
+                        ⚠️ Overspeed detected
+                      </div>
                     )}
                   </div>
                 </div>
