@@ -1,16 +1,117 @@
-# React + Vite
+# Fleet Tracking Application
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+![Fleet Tracking Dashboard](assets/dashboard.png)
 
-Currently, two official plugins are available:
+A modern, real-time fleet tracking application built with React and Vite. Monitor your vehicle fleet with live location updates, trip tracking, and detailed analytics.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## ✨ Features
 
-## React Compiler
+- 🚗 Real-time vehicle tracking
+- 📍 Live location updates
+- 🚦 Trip status monitoring (In Progress, Completed, Cancelled)
+- ⚡ Speed violation alerts
+- 📊 Trip analytics and statistics
+- 📱 Responsive design for all devices
+- 🌐 Interactive map view
+- 🔔 Real-time notifications for events
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🚀 Getting Started
 
-## Expanding the ESLint configuration
+### Prerequisites
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- Node.js (v16 or later)
+- npm (v8 or later) or yarn
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/fleet-tracking-application.git
+   cd fleet-tracking-application
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   # or
+   yarn install
+   ```
+
+3. Start the development server:
+   ```bash
+   npm run dev
+   # or
+   yarn dev
+   ```
+
+4. Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+## 🛠️ Built With
+
+- [React](https://reactjs.org/) - Frontend library
+- [Vite](https://vitejs.dev/) - Build tool
+- [Tailwind CSS](https://tailwindcss.com/) - Styling
+- [Lucide Icons](https://lucide.dev/) - Icon library
+- [React Router](https://reactrouter.com/) - Client-side routing
+
+## 📂 Project Structure
+
+```
+src/
+├── components/     # Reusable UI components
+├── hooks/         # Custom React hooks
+├── utils/         # Utility functions
+├── data/          # Sample data and types
+└── App.jsx        # Main application component
+```
+
+## 📝 Sample Data
+
+The application comes with sample trip data that includes:
+
+- Trip details (ID, name, driver, route)
+- Vehicle information
+- Location history
+- Movement data (speed, heading, distance)
+- Device status (battery, signal quality)
+- Event history (starts, stops, violations, alerts)
+
+## 📱 Responsive Design
+
+The application is fully responsive and works on:
+
+- Desktop computers
+- Tablets
+- Mobile devices
+
+## 📊 Features in Detail
+
+### Real-time Tracking
+- Live vehicle location updates
+- Trip progress monitoring
+- Route visualization
+
+### Alerts & Notifications
+- Speed violation alerts
+- Device status notifications
+- Trip status changes
+
+### Analytics
+- Distance traveled
+- Average speed
+- Trip duration
+- Fuel efficiency metrics
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTING.md) to get started.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Vite](https://vitejs.dev/) for the amazing development experience
+- [React](https://reactjs.org/) for the component-based architecture
+- [Tailwind CSS](https://tailwindcss.com/) for the utility-first CSS framework
